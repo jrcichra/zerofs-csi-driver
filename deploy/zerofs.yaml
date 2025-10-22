@@ -1,0 +1,239 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zerofs
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zerofs-csi-driver
+  namespace: zerofs
+imagePullSecrets:
+  - name: ghcrio-credentials
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zerofs-csi-driver
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+      - persistentvolumes
+      - persistentvolumeclaims
+      - events
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+      - update
+      - patch
+  - apiGroups:
+      - storage.k8s.io
+    resources:
+      - storageclasses
+      - volumeattachments
+      - volumeattachments/status
+      - csinodes
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+      - update
+      - patch
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: zerofs-csi-driver
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zerofs-csi-driver
+subjects:
+  - kind: ServiceAccount
+    name: zerofs-csi-driver
+    namespace: zerofs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zerofs-csi-driver
+  namespace: zerofs
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+      - configmaps
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+      - update
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zerofs-csi-driver
+  namespace: zerofs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: zerofs-csi-driver
+subjects:
+  - kind: ServiceAccount
+    name: zerofs-csi-driver
+    namespace: zerofs
+---
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: zerofs.csi.driver
+spec:
+  attachRequired: true
+  fsGroupPolicy: File
+  podInfoOnMount: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zerofs-csi-controller
+  namespace: zerofs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zerofs-csi-controller
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: zerofs-csi-controller
+    spec:
+      containers:
+        - args:
+            - --controller
+          image: ghcr.io/jrcichra/zerofs-csi-driver:v0.1.0
+          name: zerofs-csi-controller
+          volumeMounts:
+            - mountPath: /var/lib/kubelet/plugins/zerofs.csi.driver
+              name: socket
+        - args:
+            - --csi-address=/var/lib/kubelet/plugins/zerofs.csi.driver/csi.sock
+            - --extra-create-metadata
+            - --feature-gates=Topology=false
+            - --v=5
+          image: registry.k8s.io/sig-storage/csi-provisioner:v5.2.0
+          name: external-provisioner
+          volumeMounts:
+            - mountPath: /var/lib/kubelet/plugins/zerofs.csi.driver
+              name: socket
+        - args:
+            - --csi-address=/var/lib/kubelet/plugins/zerofs.csi.driver/csi.sock
+            - --v=5
+          image: registry.k8s.io/sig-storage/csi-attacher:v4.8.0
+          name: external-attacher
+          volumeMounts:
+            - mountPath: /var/lib/kubelet/plugins/zerofs.csi.driver
+              name: socket
+      serviceAccountName: zerofs-csi-driver
+      volumes:
+        - emptyDir: {}
+          name: socket
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: zerofs-csi-node
+  namespace: zerofs
+spec:
+  selector:
+    matchLabels:
+      app: zerofs-csi-node
+  template:
+    metadata:
+      labels:
+        app: zerofs-csi-node
+    spec:
+      containers:
+        - args:
+            - --node
+          image: ghcr.io/jrcichra/zerofs-csi-driver:v0.1.0
+          name: zerofs-csi-node
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /var/lib/kubelet/plugins/zerofs.csi.driver
+              mountPropagation: Bidirectional
+              name: plugin-dir
+            - mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+              name: pod-mount-dir
+        - args:
+            - --csi-address=/var/lib/kubelet/plugins/zerofs.csi.driver/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/zerofs.csi.driver/csi.sock
+            - --v=5
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.13.0
+          name: node-driver-registrar
+          volumeMounts:
+            - mountPath: /var/lib/kubelet/plugins/zerofs.csi.driver
+              name: plugin-dir
+            - mountPath: /registration
+              name: registration-dir
+      hostNetwork: true
+      initContainers:
+        - command:
+            - /bin/sh
+            - -c
+            - modprobe nbd max_part=100
+          image: ghcr.io/jrcichra/zerofs-csi-driver:v0.1.0
+          name: setup-nbd-disks
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /lib/modules
+              name: lib-modules-dir
+              readOnly: true
+      serviceAccountName: zerofs-csi-driver
+      volumes:
+        - hostPath:
+            path: /var/lib/kubelet/pods
+            type: DirectoryOrCreate
+          name: pod-mount-dir
+        - hostPath:
+            path: /var/lib/kubelet/plugins/zerofs.csi.driver
+            type: DirectoryOrCreate
+          name: plugin-dir
+        - hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: DirectoryOrCreate
+          name: registration-dir
+        - hostPath:
+            path: /lib/modules
+            type: Directory
+          name: lib-modules-dir
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 100%
