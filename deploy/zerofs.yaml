@@ -133,6 +133,9 @@ spec:
       containers:
         - args:
             - --controller
+            # Enable leader election for the main CSI controller with a unique ID
+            - --leader-election=true
+            - --leader-election-id=zerofs-csi-controller-leader-election
           image: ghcr.io/jrcichra/zerofs-csi-driver:v0.1.0
           name: zerofs-csi-controller
           volumeMounts:
@@ -143,6 +146,9 @@ spec:
             - --extra-create-metadata
             - --feature-gates=Topology=false
             - --v=5
+            # Enable leader election for the external-provisioner sidecar with a unique ID
+            - --leader-election=true
+            - --leader-election-id=zerofs-csi-provisioner-leader-election
           image: registry.k8s.io/sig-storage/csi-provisioner:v5.2.0
           name: external-provisioner
           volumeMounts:
@@ -151,6 +157,9 @@ spec:
         - args:
             - --csi-address=/var/lib/kubelet/plugins/zerofs.csi.driver/csi.sock
             - --v=5
+            # Enable leader election for the external-attacher sidecar with a unique ID
+            - --leader-election=true
+            - --leader-election-id=zerofs-csi-attacher-leader-election
           image: registry.k8s.io/sig-storage/csi-attacher:v4.8.0
           name: external-attacher
           volumeMounts:
