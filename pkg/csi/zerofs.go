@@ -164,6 +164,7 @@ endpoint = "{{.AWSEndpoint}}"
 			Namespace: m.namespace,
 			Labels: map[string]string{
 				"app":    "zerofs",
+				"type":   "volume",
 				"volume": volumeID,
 			},
 		},
