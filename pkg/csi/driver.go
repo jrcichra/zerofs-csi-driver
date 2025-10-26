@@ -55,11 +55,7 @@ func (d *zeroFSDriver) Start(ctx context.Context) error {
 	d.logger.Infof("Starting %s driver version %s", d.name, d.version)
 
 	// Get node ID
-	nodeID, err := os.Hostname()
-	if err != nil {
-		return fmt.Errorf("failed to get hostname: %w", err)
-	}
-	d.nodeID = nodeID
+	d.nodeID = os.Getenv("NODE_ID")
 
 	// Create gRPC server with custom options
 	serverOptions := []grpc.ServerOption{
