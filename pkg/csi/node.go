@@ -16,6 +16,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const ZeroFSRunDir = "/run/zerofs-csi"
+
 type nodeService struct {
 	csi.UnimplementedNodeServer
 	name    string
@@ -195,19 +197,31 @@ func (ns *nodeService) NodePublishVolume(ctx context.Context, req *csi.NodePubli
 		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to unmount 9p volume: %v", err))
 	}
 
-	// Connect to the NBD server using nbd-client
-	cmd = exec.Command("nbd-client", "-unix", nbdSocketPath, "-N", "disk", "-persist", "-timeout", "0", "-connections", "4")
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		ns.logger.Errorf("Failed to connect to NBD device: %v output: %s", err, string(output))
-		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to connect to NBD device: %v output: %s", err, string(output)))
-	}
+	// Check if we already have a tracking file with an NBD device path
+	nbdDeviceFilePath := filepath.Join(ZeroFSRunDir, req.VolumeId)
+	var nbdDevicePath string
+	if _, err := os.Stat(nbdDeviceFilePath); err == nil {
+		// File exists, read the NBD device path from it
+		nbdDeviceBytes, err := os.ReadFile(nbdDeviceFilePath)
+		if err != nil {
+			ns.logger.Warnf("Failed to read existing NBD device file for volume %s: %v", req.VolumeId, err)
+		}
+		nbdDevicePath = string(nbdDeviceBytes)
+	} else {
+		// Connect to the NBD server using nbd-client
+		cmd = exec.Command("nbd-client", "-unix", nbdSocketPath, "-N", "disk", "-persist", "-timeout", "0", "-connections", "4")
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			ns.logger.Errorf("Failed to connect to NBD device: %v output: %s", err, string(output))
+			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to connect to NBD device: %v output: %s", err, string(output)))
+		}
 
-	// parse out the device name we were assigned (/dev/nbd*)
-	nbdDevicePath, err := parseNBDDevice(string(output))
-	if err != nil {
-		ns.logger.Errorf("Failed to discover NBD device name: %v", err)
-		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to discover NBD device name: %v", err))
+		// parse out the device name we were assigned (/dev/nbd*)
+		nbdDevicePath, err = parseNBDDevice(string(output))
+		if err != nil {
+			ns.logger.Errorf("Failed to discover NBD device name: %v", err)
+			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to discover NBD device name: %v", err))
+		}
 	}
 
 	// Check if the device already has a filesystem
@@ -263,6 +277,16 @@ func (ns *nodeService) NodePublishVolume(ctx context.Context, req *csi.NodePubli
 
 	ns.logger.Infof("Volume %s mounted successfully using NBD device %s", volumeId, nbdDevicePath)
 
+	// Create the run directory if it doesn't exist
+	if err := os.MkdirAll(ZeroFSRunDir, 0755); err != nil {
+		ns.logger.Warnf("Failed to create run directory %s: %v", ZeroFSRunDir, err)
+	}
+
+	// Write the NBD device path to a file in /run/zerofs-csi/
+	if err := os.WriteFile(nbdDeviceFilePath, []byte(nbdDevicePath), 0644); err != nil {
+		ns.logger.Warnf("Failed to write NBD device file for volume %s: %v", volumeId, err)
+	}
+
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
@@ -314,6 +338,16 @@ func (ns *nodeService) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnp
 	if err := ns.mounter.waitForPodDeletion(podName, ns.mounter.namespace, 30*time.Second); err != nil {
 		ns.logger.Warnf("Warning: failed to wait for pod deletion: %v", err)
 		// Continue with response even if we couldn't verify deletion
+	}
+
+	// Remove the tracking file from /run/zerofs-csi/
+	nbdDeviceFilePath := filepath.Join(ZeroFSRunDir, req.VolumeId)
+	if _, err := os.Stat(nbdDeviceFilePath); err == nil {
+		if removeErr := os.Remove(nbdDeviceFilePath); removeErr != nil {
+			ns.logger.Warnf("Failed to remove NBD device file for volume %s: %v", req.VolumeId, removeErr)
+		}
+	} else if !os.IsNotExist(err) {
+		ns.logger.Warnf("Error checking NBD device file for volume %s: %v", req.VolumeId, err)
 	}
 
 	ns.logger.Infof("Volume %s unpublished successfully", req.VolumeId)
