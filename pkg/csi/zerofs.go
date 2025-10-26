@@ -253,9 +253,10 @@ endpoint = "{{.AWSEndpoint}}"
 
 	// Add envoy container if enabled
 	if strings.EqualFold(configMapData["envoyEnabled"], "true") {
-		pod.Spec.Containers = append(pod.Spec.Containers, corev1.Container{
-			Name:  "envoy",
-			Image: cmp.Or(configMapData["envoyImage"], EnvoyDefaultImage),
+		pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
+			Name:          "envoy",
+			Image:         cmp.Or(configMapData["envoyImage"], EnvoyDefaultImage),
+			RestartPolicy: ptr.To(corev1.ContainerRestartPolicyAlways), // https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/
 			VolumeMounts: []corev1.VolumeMount{
 				{
 					Name:      "envoy-config",
