@@ -119,7 +119,7 @@ metadata:
   name: zerofs-csi-controller
   namespace: zerofs
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: zerofs-csi-controller
