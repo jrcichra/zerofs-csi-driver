@@ -18,16 +18,12 @@ import (
 func main() {
 	enableController := flag.Bool("controller", false, "Enable the CSI Controller server")
 	enableNode := flag.Bool("node", false, "Enable the CSI Node server")
-	leaderElection := flag.Bool("leader-election", false, "Enable leader election for the controller manager. Enabling this will ensure there is only one active controller manager.")
-	leaderElectionID := flag.String("leader-election-id", "zerofs-csi-driver", "The ID to use for leader election.")
 	zerofsNamespace := flag.String("namespace", "zerofs", "Kubernetes namespace for ZeroFS pods")
 
 	flag.Parse()
 
 	config := ctrl.GetConfigOrDie()
 	mgrOptions := ctrl.Options{
-		LeaderElection:   *leaderElection,
-		LeaderElectionID: *leaderElectionID,
 		NewCache: func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
 			// Set default namespace for internal resources
 			opts.DefaultNamespaces = map[string]cache.Config{
