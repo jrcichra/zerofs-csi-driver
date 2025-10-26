@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -367,21 +368,61 @@ func (ns *nodeService) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetV
 		return nil, status.Error(codes.InvalidArgument, "volume path cannot be empty")
 	}
 
-	// Get filesystem stats for the volume path
-	stat, err := os.Stat(req.VolumePath)
+	// Use df command to get volume stats
+	cmd := exec.Command("df", "-B1", req.VolumePath)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		ns.logger.Errorf("Failed to get stats for %s: %v", req.VolumePath, err)
+		ns.logger.Errorf("Failed to execute df command for %s: %v, output: %s", req.VolumePath, err, string(output))
 		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to get volume stats: %v", err))
 	}
 
-	ns.logger.Infof("Volume %s stats retrieved. Size: %d bytes", req.VolumeId, stat.Size())
+	// Parse the output
+	lines := strings.Split(string(output), "\n")
+	if len(lines) < 2 {
+		ns.logger.Errorf("Unexpected df output format for %s: %s", req.VolumePath, string(output))
+		return nil, status.Error(codes.Internal, "unexpected df output format")
+	}
+
+	// Extract the stats line (second line)
+	fields := strings.Fields(lines[1])
+	if len(fields) < 4 {
+		ns.logger.Errorf("Unexpected number of fields in df output for %s: %s", req.VolumePath, string(output))
+		return nil, status.Error(codes.Internal, "unexpected number of fields in df output")
+	}
+
+	totalBytes, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		ns.logger.Errorf("Failed to parse total bytes from df output for %s: %v", req.VolumePath, err)
+		return nil, status.Error(codes.Internal, "failed to parse volume stats")
+	}
+
+	usedBytes, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		ns.logger.Errorf("Failed to parse used bytes from df output for %s: %v", req.VolumePath, err)
+		return nil, status.Error(codes.Internal, "failed to parse volume stats")
+	}
+
+	availableBytes, err := strconv.ParseInt(fields[3], 10, 64)
+	if err != nil {
+		ns.logger.Errorf("Failed to parse available bytes from df output for %s: %v", req.VolumePath, err)
+		return nil, status.Error(codes.Internal, "failed to parse volume stats")
+	}
+
+	ns.logger.Infof(
+		"Volume %s stats retrieved. Total: %d bytes, Used: %d bytes, Available: %d bytes",
+		req.VolumeId,
+		totalBytes,
+		usedBytes,
+		availableBytes,
+	)
 
 	return &csi.NodeGetVolumeStatsResponse{
 		Usage: []*csi.VolumeUsage{
 			{
-				Unit:  csi.VolumeUsage_UNKNOWN,
-				Total: stat.Size(),
-				Used:  stat.Size(),
+				Unit:      csi.VolumeUsage_BYTES,
+				Total:     totalBytes,
+				Used:      usedBytes,
+				Available: availableBytes,
 			},
 		},
 	}, nil
