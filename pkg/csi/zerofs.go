@@ -11,6 +11,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -158,6 +159,7 @@ endpoint = "{{.AWSEndpoint}}"
 
 	// Create a pod manifest for the zerofs
 	podName := fmt.Sprintf("zerofs-volume-%s", volumeID)
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
@@ -249,6 +251,12 @@ endpoint = "{{.AWSEndpoint}}"
 				},
 			},
 		},
+	}
+
+	// Only set resource requirements if they were provided
+	zerofsResourceRequirements := m.parseResourceRequirements(configMapData)
+	if zerofsResourceRequirements != nil {
+		pod.Spec.Containers[0].Resources = *zerofsResourceRequirements
 	}
 
 	// Add envoy container if enabled
@@ -421,4 +429,65 @@ func (m *zerofsMounter) RemovePod(ctx context.Context, volumeID string) error {
 
 	m.logger.Infof("Pod removed successfully for volume %s", volumeID)
 	return nil
+}
+
+// parseResourceRequirements parses CPU and memory requests/limits from configMapData
+func (m *zerofsMounter) parseResourceRequirements(configMapData map[string]string) *corev1.ResourceRequirements {
+	var zerofsResourceRequirements *corev1.ResourceRequirements
+	cpuRequest, cpuLimit, memoryRequest, memoryLimit := configMapData["cpuRequest"], configMapData["cpuLimit"], configMapData["memoryRequest"], configMapData["memoryLimit"]
+	if cpuRequest != "" || cpuLimit != "" || memoryRequest != "" || memoryLimit != "" {
+		zerofsResourceRequirements = &corev1.ResourceRequirements{}
+
+		// Parse CPU requests and limits
+		if cpuRequest != "" {
+			cpuRequestQuantity, err := resource.ParseQuantity(cpuRequest)
+			if err != nil {
+				m.logger.Warnf("Failed to parse cpuRequest '%s': %v", cpuRequest, err)
+			} else {
+				if zerofsResourceRequirements.Requests == nil {
+					zerofsResourceRequirements.Requests = corev1.ResourceList{}
+				}
+				zerofsResourceRequirements.Requests[corev1.ResourceCPU] = cpuRequestQuantity
+			}
+		}
+
+		if cpuLimit != "" {
+			cpuLimitQuantity, err := resource.ParseQuantity(cpuLimit)
+			if err != nil {
+				m.logger.Warnf("Failed to parse cpuLimit '%s': %v", cpuLimit, err)
+			} else {
+				if zerofsResourceRequirements.Limits == nil {
+					zerofsResourceRequirements.Limits = corev1.ResourceList{}
+				}
+				zerofsResourceRequirements.Limits[corev1.ResourceCPU] = cpuLimitQuantity
+			}
+		}
+
+		// Parse memory requests and limits
+		if memoryRequest != "" {
+			memoryRequestQuantity, err := resource.ParseQuantity(memoryRequest)
+			if err != nil {
+				m.logger.Warnf("Failed to parse memoryRequest '%s': %v", memoryRequest, err)
+			} else {
+				if zerofsResourceRequirements.Requests == nil {
+					zerofsResourceRequirements.Requests = corev1.ResourceList{}
+				}
+				zerofsResourceRequirements.Requests[corev1.ResourceMemory] = memoryRequestQuantity
+			}
+		}
+
+		if memoryLimit != "" {
+			memoryLimitQuantity, err := resource.ParseQuantity(memoryLimit)
+			if err != nil {
+				m.logger.Warnf("Failed to parse memoryLimit '%s': %v", memoryLimit, err)
+			} else {
+				if zerofsResourceRequirements.Limits == nil {
+					zerofsResourceRequirements.Limits = corev1.ResourceList{}
+				}
+				zerofsResourceRequirements.Limits[corev1.ResourceMemory] = memoryLimitQuantity
+			}
+		}
+	}
+
+	return zerofsResourceRequirements
 }
