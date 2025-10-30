@@ -43,7 +43,6 @@ func NewZeroFSMounter(ctx context.Context, logger *logrus.Logger, namespace stri
 
 // getDaemonSetUID gets the UID of the zerofs-csi-node DaemonSet
 func (m *zerofsMounter) getDaemonSetUID(ctx context.Context) (types.UID, error) {
-	// Create a placeholder DaemonSet object to get the UID
 	daemonSet := &appsv1.DaemonSet{}
 	err := m.client.Get(ctx, types.NamespacedName{Name: "zerofs-csi-node", Namespace: m.namespace}, daemonSet)
 	if err != nil {
