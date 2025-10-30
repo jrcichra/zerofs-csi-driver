@@ -28,7 +28,6 @@ type zeroFSDriver struct {
 	enableNode       bool
 	namespace        string
 	mounter          *zerofsMounter
-	daemonSetUID     string
 
 	client client.Client
 
