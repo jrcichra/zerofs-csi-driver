@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,6 +39,17 @@ func NewZeroFSMounter(ctx context.Context, logger *logrus.Logger, namespace stri
 		namespace: namespace,
 		client:    client,
 	}
+}
+
+// getDaemonSetUID gets the UID of the zerofs-csi-node DaemonSet
+func (m *zerofsMounter) getDaemonSetUID(ctx context.Context) (types.UID, error) {
+	// Create a placeholder DaemonSet object to get the UID
+	daemonSet := &appsv1.DaemonSet{}
+	err := m.client.Get(ctx, types.NamespacedName{Name: "zerofs-csi-node", Namespace: m.namespace}, daemonSet)
+	if err != nil {
+		return "", fmt.Errorf("failed to get DaemonSet: %w", err)
+	}
+	return daemonSet.UID, nil
 }
 
 // CreatePod creates a pod for a zerofs server
@@ -160,6 +172,12 @@ endpoint = "{{.AWSEndpoint}}"
 	// Create a pod manifest for the zerofs
 	podName := fmt.Sprintf("zerofs-volume-%s", volumeID)
 
+	// Get the DaemonSet UID for OwnerReference
+	daemonSetUID, err := m.getDaemonSetUID(ctx)
+	if err != nil {
+		m.logger.Warnf("Failed to get DaemonSet UID, continuing without it: %v", err)
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
@@ -168,6 +186,14 @@ endpoint = "{{.AWSEndpoint}}"
 				"app":    "zerofs",
 				"type":   "volume",
 				"volume": volumeID,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: "v1",
+					Kind:       "DaemonSet",
+					Name:       "zerofs-csi-node",
+					UID:        daemonSetUID,
+				},
 			},
 		},
 		Spec: corev1.PodSpec{
